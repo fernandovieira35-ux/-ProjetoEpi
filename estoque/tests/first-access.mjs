@@ -1,0 +1,38 @@
+import {PGlite} from '../../.tools/pglite/package/dist/index.js';
+import {readFileSync} from 'node:fs';
+import assert from 'node:assert/strict';
+import {normalizeUsername,loginEmail} from '../assets/js/username.js';
+assert.equal(normalizeUsername('  Joao.Silva '),'joao.silva');
+for(const name of ['ab','a b','ábc','x@y.com','1abc'])assert.throws(()=>normalizeUsername(name));
+assert.equal(loginEmail('Joao.Silva'),'joao.silva@usuarios.transcol.invalid');
+const db=new PGlite();
+await db.exec(`create role anon; create role authenticated; create schema auth;
+create table auth.users(id uuid primary key,email text,encrypted_password text,raw_app_meta_data jsonb,raw_user_meta_data jsonb);
+create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+create function auth.jwt() returns jsonb language sql stable as $$select jsonb_build_object('aal',current_setting('request.jwt.claim.aal',true))$$;
+grant usage on schema auth to authenticated; grant execute on all functions in schema auth to authenticated;`);
+for(const file of ['001_estoque','002_restauracao_excel','003_recebedores','004_entregador_automatico','005_usuarios_primeiro_acesso'])await db.exec(readFileSync(new URL('../supabase/'+file+'.sql',import.meta.url),'utf8'));
+const admin='00000000-0000-4000-8000-000000000001',operator='00000000-0000-4000-8000-000000000002',untrusted='00000000-0000-4000-8000-000000000003';
+await db.exec(`insert into auth.users(id) values('${admin}');insert into public.profiles(id,role) values('${admin}','admin');
+insert into auth.users(id,encrypted_password,raw_app_meta_data) values('${operator}','hash-inicial','{"provision_access":true,"username":"novo.operador","access_role":"operador","must_change_password":true}');
+insert into auth.users(id,raw_user_meta_data) values('${untrusted}','{"provision_access":true,"username":"intruso","access_role":"admin"}');`);
+async function as(id,aal='aal2'){await db.exec(`reset role;set request.jwt.claim.sub='${id}';set request.jwt.claim.aal='${aal}';set role authenticated;`);}
+async function scalar(sql){return Object.values((await db.query(sql)).rows[0])[0];}
+await as(admin);assert.equal(await scalar('select count(*)::int from public.profiles'),2);
+const cat=await scalar("select public.create_category('Mãos')");
+await as(operator);assert.equal((await scalar('select public.access_status()')).must_change_password,true);
+assert.equal(await scalar('select count(*)::int from public.categories'),0);
+await assert.rejects(()=>db.exec("select public.import_items('[{\"codigo\":\"X\",\"nome\":\"Luva\",\"categoria\":\"Mãos\",\"unidade\":\"par\",\"minimo\":1}]')"));
+await assert.rejects(()=>db.exec('update public.profiles set must_change_password=false'));
+await assert.rejects(()=>db.exec("select public.create_category('Bypass')"));
+await db.exec(`reset role;update auth.users set raw_user_meta_data='{"must_change_password":false}' where id='${operator}';`);
+await as(operator);assert.equal((await scalar('select public.access_status()')).must_change_password,true);
+await db.exec(`reset role;update auth.users set encrypted_password='hash-inicial' where id='${operator}';`);
+await as(operator);assert.equal((await scalar('select public.access_status()')).must_change_password,true);
+await db.exec(`reset role;update auth.users set encrypted_password='hash-novo' where id='${operator}';`);
+await as(operator,'aal1');assert.equal((await scalar('select public.access_status()')).must_change_password,false);assert.equal(await scalar('select count(*)::int from public.categories'),0);
+await as(operator);assert.equal(await scalar('select count(*)::int from public.categories'),1);assert.equal(await scalar('select public.can_manage_users()'),false);
+await assert.rejects(()=>db.exec(`select public.set_user_access('${admin}','leitor',false)`));
+await as(admin);assert.equal(await scalar('select public.can_manage_users()'),true);await db.exec(`select public.set_user_access('${operator}','leitor',false)`);
+await as(operator);assert.equal((await scalar('select public.access_status()')).active,false);assert.equal(await scalar('select count(*)::int from public.categories'),0);
+await db.close();console.log('Primeiro acesso: migrações, provisionamento confiável, bloqueio RLS/RPC, metadados não confiáveis, troca real de hash, MFA, permissões e bloqueio de usuário: OK.');

@@ -1,0 +1,15 @@
+.tools/
+.verificacao/
+.env
+.env.*
+!.env.example
+backups/
+*.dump
+*.xlsx
+*.xls
+
+.descarte/
+dist/
+.secrets/
+*.pem
+*.key

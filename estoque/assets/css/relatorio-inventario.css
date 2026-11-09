@@ -1,0 +1,10 @@
+.inventory--actions{display:flex;flex-wrap:wrap;gap:.5rem}
+#inventory-report{display:none}
+@page inventory{size:A4 landscape;margin:12mm}
+@media print{
+body.inventory--printing>main,body.inventory--printing>aside,body.inventory--printing>.skip,body.inventory--printing>#delivery-receipt,body.inventory--printing>#expired-report{display:none!important}
+body.inventory--printing #inventory-report{display:block!important;page:inventory;color:#20252c;background:white;font:9pt/1.4 Arial,sans-serif;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+#inventory-report .inventory--header{display:flex;align-items:center;gap:8mm;border-bottom:2px solid #c8202f;padding-bottom:3mm;margin-bottom:3mm}
+#inventory-report img{width:32mm;height:auto}#inventory-report h1{font-size:20pt;margin:1mm 0}#inventory-report small{font-size:8pt;color:#666}#inventory-report p{margin:2mm 0;font-size:8pt}
+#inventory-report table{table-layout:fixed;width:100%;font-size:8pt;margin-top:4mm;border-collapse:collapse}#inventory-report thead{display:table-header-group}#inventory-report th{background:#25272b;color:white;text-align:left}#inventory-report td,#inventory-report th{padding:2mm;border-bottom:1px solid #d8dbe0;overflow-wrap:anywhere}#inventory-report tbody tr:nth-child(even){background:#f0f2f5}#inventory-report tr{break-inside:avoid}#inventory-report th:nth-child(2){width:23%}#inventory-report th:nth-child(3){width:13%}#inventory-report footer{display:block;border-top:1px solid #bbb;margin-top:4mm;padding-top:2mm;font-size:8pt}
+}

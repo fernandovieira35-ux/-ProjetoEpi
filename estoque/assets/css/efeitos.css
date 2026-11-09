@@ -1,0 +1,15 @@
+/* Efeitos discretos e imagens locais da frota nas telas internas. */
+.fleet--strip{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;padding:16px 20px;background:#22262d;color:white;border-radius:14px;overflow:hidden;border-left:4px solid #d52b3b}
+.fleet--strip p{margin:0;font-size:13px}.fleet--strip strong{display:block;margin-bottom:5px;font-size:17px}
+.fleet--photos{display:flex;gap:10px;flex:0 1 440px;min-width:0}.fleet--photos img{width:calc(50% - 5px);height:100px;object-fit:cover;border-radius:8px;transition:transform .4s,filter .4s}.fleet--photos img:hover{transform:scale(1.04);filter:saturate(1.15)}
+#expiry-banner.expiry--clear{background:#e9f8ef;border:1px solid #70ab85;color:#174b2b}
+#expiry-banner.expiry--clear .expiry--warning{display:none}
+#expiry-banner.expiry--clear:before{content:'✓';display:inline-grid;place-items:center;flex:none;width:32px;height:32px;border-radius:50%;background:#228447;color:white;font:bold 23px Arial}
+#expiry-banner.expiry--clear a{color:inherit}
+[data-theme="dark"] #expiry-banner.expiry--clear{background:#173c2b;border-color:#438660;color:#d5f7e1}
+button:not(:disabled):active,#navigation a:active{transform:scale(.97)}
+.click--feedback{animation:click--glow .4s ease-out}
+@keyframes click--glow{0%{box-shadow:0 0 0 0 #ef405680}100%{box-shadow:0 0 0 9px #ef405600}}
+@media(max-width:700px){.fleet--strip{padding:12px;gap:12px;flex-direction:column;align-items:stretch}.fleet--photos{flex:auto}.fleet--photos img{height:90px}.fleet--strip strong{font-size:15px}}
+@media(prefers-reduced-motion:reduce){.click--feedback{animation:none}.fleet--photos img{transition:none}.fleet--photos img:hover,button:not(:disabled):active,#navigation a:active{transform:none}}
+@media print{.fleet--strip{display:none!important}.click--feedback{animation:none}}

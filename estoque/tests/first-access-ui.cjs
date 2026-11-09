@@ -1,0 +1,27 @@
+async function go(page,id){if(await page.locator('#menu-toggle').isVisible()&&await page.locator('#menu-toggle').getAttribute('aria-expanded')==='false')await page.locator('#menu-toggle').click();await page.locator('#navigation a[href="#'+id+'"]').click();await page.locator('#'+id).waitFor({state:'visible'});}
+const {chromium}=require('../../.tools/package');
+const http=require('node:http'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const root=path.resolve(__dirname,'..');
+const server=http.createServer((req,res)=>{const file=path.resolve(root,'.'+(req.url.split('?')[0]==='/'?'/index.html':req.url.split('?')[0]));if(!file.startsWith(root+path.sep))return res.writeHead(403).end();fs.readFile(file,(err,data)=>{if(err)return res.writeHead(404).end();const ext=path.extname(file);res.setHeader('Content-Type',({'.js':'text/javascript','.html':'text/html','.css':'text/css','.png':'image/png','.webp':'image/webp','.jpeg':'image/jpeg'})[ext]||'application/octet-stream');res.end(data);});});
+async function poll(page,fn){for(let i=0;i<100;i++){if(await page.evaluate(fn))return;await new Promise(r=>setTimeout(r,50));}throw new Error('Condição não atingida: '+await page.locator('#message').textContent());}
+(async()=>{await new Promise(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${server.address().port}`;const browser=await chromium.launch({channel:'msedge',headless:true});try{const page=await browser.newPage();const errors=[],remote=[];page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(!r.url().startsWith(base))remote.push(r.url());});
+
+await page.goto(base+'/?demo=1');
+async function login(username,password){await page.locator('#login-form [name=email]').fill(username);await page.locator('#login-form [name=password]').fill(password);await page.locator('#login-form button').click();await page.locator('#workspace').waitFor({state:'visible'});}
+await login('admin','DemoEpi2026!');await go(page,'usuarios');
+assert.equal(await page.evaluate(async()=>{const api=await import('./assets/js/api.js');const body={username:'sem.troca',password:'InicialForte2026!',role:'operador',active:true,must_change_password:false};await api.rpc('create_user',body);try{await api.rpc('create_user',body);return false;}catch{return true;}}),true);
+assert.equal(await page.locator('#access-categories').count(),0);assert.equal(await page.locator('[name=must_change_password]').isChecked(),true);
+for(const width of [1440,768,390,320]){await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);}
+await page.locator('#create-user-form [name=username]').fill('Teste.Novo');await page.locator('[name=initial_password]').fill('SenhaInicial2026!');await page.locator('#create-user-form [name=role]').selectOption('operador');await page.locator('#create-user-form button').click();await poll(page,()=>document.querySelector('#message').textContent.includes('Usuário criado'));
+assert.equal(await page.locator('[name=initial_password]').inputValue(),'');assert.match(await page.locator('#users-body').textContent(),/teste.novo/);
+await page.locator('#logout').click();await login('teste.novo','SenhaInicial2026!');assert.equal(await page.locator('#first-access-notice').isVisible(),true);assert.equal(await page.locator('#inventario').isVisible(),false);
+await page.evaluate(()=>location.hash='inventario');await page.waitForTimeout(100);assert.equal(await page.locator('#meu-acesso').isVisible(),true);assert.equal(await page.locator('#inventario').isVisible(),false);
+assert.equal(await page.evaluate(async()=>{const api=await import('./assets/js/api.js');try{await api.rows('items');return false;}catch{return true;}}),true);
+await page.locator('[name=current_password]').fill('SenhaInicial2026!');await page.locator('#new-password').fill('SenhaDefinitiva2026!');await page.locator('[name=confirm_password]').fill('SenhaDefinitiva2026!');await page.locator('#password-form button').click();await poll(page,()=>!document.body.classList.contains('password--required')&&document.querySelector('#count').textContent==='12');
+await go(page,'inventario');assert.equal(await page.locator('#inventario').isVisible(),true);await page.locator('#logout').click();
+await page.locator('#login-form [name=email]').fill('teste.novo');await page.locator('#login-form [name=password]').fill('SenhaInicial2026!');await page.locator('#login-form button').click();await poll(page,()=>document.querySelector('#message').textContent.includes('inválidos'));
+await login('teste.novo','SenhaDefinitiva2026!');assert.equal(await page.locator('#first-access-notice').isVisible(),false);
+assert.equal(await page.evaluate(async()=>{const api=await import('./assets/js/api.js');try{await api.rpc('create_user',{username:'intruso',password:'InicialForte2026!',role:'admin',active:true,must_change_password:false});return false;}catch{return true;}}),true);
+await page.locator('#logout').click();await login('sem.troca','InicialForte2026!');assert.equal(await page.locator('#first-access-notice').isVisible(),false);assert.equal(await page.locator('#count').textContent(),'12');
+assert.deepEqual(errors,[]);console.log('Criação por usuário, categoria removida, flag padrão, login, bloqueio de navegação/API, troca obrigatória, senha antiga recusada e quatro larguras: OK.');
+}finally{await browser.close();server.close();}})().catch(e=>{console.error(e);server.close();process.exitCode=1;});

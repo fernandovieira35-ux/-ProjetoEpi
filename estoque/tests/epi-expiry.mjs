@@ -1,0 +1,48 @@
+import {PGlite} from '../../.tools/pglite/package/dist/index.js';
+import {readFileSync} from 'node:fs';
+import assert from 'node:assert/strict';
+import {normalizeUsername,loginEmail} from '../assets/js/username.js';
+assert.equal(normalizeUsername('  Joao.Silva '),'joao.silva');
+for(const name of ['ab','a b','ábc','x@y.com','1abc'])assert.throws(()=>normalizeUsername(name));
+assert.equal(loginEmail('Joao.Silva'),'joao.silva@usuarios.transcol.invalid');
+const db=new PGlite();
+await db.exec(`create role anon; create role authenticated; create schema auth;
+create table auth.users(id uuid primary key,email text,encrypted_password text,raw_app_meta_data jsonb,raw_user_meta_data jsonb);
+create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+create function auth.jwt() returns jsonb language sql stable as $$select jsonb_build_object('aal',current_setting('request.jwt.claim.aal',true))$$;
+grant usage on schema auth to authenticated; grant execute on all functions in schema auth to authenticated;`);
+for(const file of ['001_estoque','002_restauracao_excel','003_recebedores','004_entregador_automatico','005_usuarios_primeiro_acesso','006_validade_ca'])await db.exec(readFileSync(new URL('../supabase/'+file+'.sql',import.meta.url),'utf8'));
+
+const admin='00000000-0000-4000-8000-000000000001',reader='00000000-0000-4000-8000-000000000002';
+await db.exec(`insert into auth.users(id) values('${admin}'),('${reader}');insert into public.profiles(id,role) values('${admin}','admin'),('${reader}','leitor');`);
+async function as(id,aal='aal2'){await db.exec(`reset role;set request.jwt.claim.sub='${id}';set request.jwt.claim.aal='${aal}';set role authenticated;`);}
+async function scalar(sql){return Object.values((await db.query(sql)).rows[0])[0];}
+await as(admin);const category=await scalar("select public.create_category('Pés')");
+await db.exec(`select public.import_items('[{"codigo":"BOTA","nome":"Bota teste","categoria":"Pés","unidade":"par","minimo":1,"ca":"12345","validade_meses":6}]');`);
+const item=await scalar("select id from public.items where sku='BOTA'");assert.equal(await scalar('select validity_months from public.items'),6);
+await assert.rejects(()=>db.exec(`select public.set_epi_details('${item}','ABC',6)`));await assert.rejects(()=>db.exec(`select public.set_epi_details('${item}','12345',0)`));
+await db.exec(`select public.move_stock('${item}','entrada',20,'Entrada teste',gen_random_uuid())`);
+const recipient=await scalar("select public.create_recipient('Colaborador Teste','RG','TESTE0001','Transporte')");
+const old=await scalar(`select public.deliver_epi('${item}',2,'Entrega inicial',gen_random_uuid(),'${recipient}')`);
+assert.equal(await scalar(`select due_date=(delivered_on+interval '6 months')::date from public.deliveries where id='${old}'`),true);
+assert.equal(await scalar(`select item_ca from public.deliveries where id='${old}'`),'12345');
+await db.exec(`select public.set_epi_details('${item}','54321',12)`);assert.equal(await scalar(`select validity_months from public.deliveries where id='${old}'`),6);
+await assert.rejects(()=>db.exec(`select public.deliver_epi('${item}',1,'Troca parcial',gen_random_uuid(),'${recipient}','${old}')`));
+const other=await scalar("select public.create_recipient('Outro Colaborador','RG','TESTE0002','Transporte')");
+await assert.rejects(()=>db.exec(`select public.deliver_epi('${item}',2,'Outro recebedor',gen_random_uuid(),'${other}','${old}')`));
+const request='10000000-0000-4000-8000-000000000001';const sql=`select public.deliver_epi('${item}',2,'Troca vencida','${request}','${recipient}','${old}')`;
+const replacement=await scalar(sql);assert.equal(await scalar(sql),replacement);assert.equal(await scalar('select balance from public.items'),16);
+assert.equal(await scalar(`select replaced_by from public.deliveries where id='${old}'`),replacement);
+await assert.rejects(()=>db.exec(`select public.deliver_epi('${item}',2,'Outra troca',gen_random_uuid(),'${recipient}','${old}')`));
+await assert.rejects(()=>db.exec(`select public.deliver_epi('${item}',2,'Troca vencida','${request}','${recipient}')`));
+await assert.rejects(()=>db.exec(`select public.restore_inventory('[{"codigo":"BOTA","nome":"Bota teste","categoria":"Pés","unidade":"par","minimo":1,"ca":"999","validade_meses":12,"saldo":8}]',gen_random_uuid())`));assert.equal(await scalar('select balance from public.items'),16);
+await db.exec(`select public.restore_inventory('[{"codigo":"BOTA","nome":"Bota teste","categoria":"Pés","unidade":"par","minimo":1,"ca":"54321","validade_meses":12,"saldo":18}]',gen_random_uuid())`);assert.equal(await scalar('select balance from public.items'),18);
+await as(reader);assert.equal(await scalar('select count(*)::int from public.deliveries'),0);await assert.rejects(()=>db.exec(`select public.set_epi_details('${item}','12345',6)`));await assert.rejects(()=>db.exec(`select private.deliver_epi_without_replacement('${item}',1,'Bypass',gen_random_uuid(),'${recipient}')`));
+await as(admin,'aal1');await assert.rejects(()=>db.exec(`select public.set_epi_details('${item}','12345',6)`));
+assert.equal(await scalar("select (date '2026-11-01'+interval '6 months')::date::text"),'2027-05-01');assert.equal(await scalar("select (date '2024-08-31'+interval '6 months')::date::text"),'2025-02-28');
+await db.close();
+const {addMonths,expiryRows,validateEpiDetails,businessDate}=await import('../assets/js/epi-expiry.js');
+assert.equal(addMonths('2026-11-01',6),'2027-05-01');assert.equal(addMonths('2024-08-31',6),'2025-02-28');assert.equal(addMonths('2023-08-31',6),'2024-02-29');assert.equal(businessDate('2026-11-02T01:00:00Z'),'2026-11-01');
+assert.throws(()=>validateEpiDetails('abc',6));assert.throws(()=>validateEpiDetails('123',0));
+assert.deepEqual(expiryRows([{due_date:'2026-11-01',recipient_name:'A'},{due_date:'2026-11-30',recipient_name:'B'},{due_date:'2027-01-01',recipient_name:'C'},{due_date:'2020-01-01',replaced_by:'x'}],'2026-11-01').map(d=>d.status),['Vencido','Vence em até 30 dias','No prazo']);
+console.log('CA/validade: calendário, snapshots, importação/restauração, troca atômica e idempotente, quantidade, recebedor, RLS/MFA e helpers privados: OK.');
