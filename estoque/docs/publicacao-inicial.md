@@ -27,3 +27,11 @@ Para preparar o mesmo artefato localmente, defina as duas variáveis públicas e
 Os scripts e o workflow não significam que o banco ou a conta já existem. Sem URL do repositório, projeto Supabase e autenticação administrativa local, publicação e provisionamento permanecem pendentes. GitHub Pages não permite configurar todos os cabeçalhos de segurança; consulte [segurança](seguranca.md) antes de escolher a hospedagem definitiva.
 
 Referências: [Auth Admin do Supabase](https://supabase.com/docs/reference/javascript/auth-admin-createuser) e [workflows Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
+
+## Correção de login criado sem perfil
+
+Aplique também 011_provisionamento_perfil.sql no SQL Editor após 001–010. A migração permite provisionamento quando app_metadata chega após o INSERT e recupera perfis ausentes com metadados administrativos. Não redefine senhas nem sobrescreve perfis existentes.
+
+Para o primeiro administrador adcmim que nunca entrou, execute no PowerShell local: ./scripts/bootstrap-admin.ps1 -Recuperar. O script lê automaticamente a URL configurada e pede somente a chave administrativa oculta. Exibe nova senha apenas depois de confirmar perfil ativo/admin e troca obrigatória. Não envie a senha em capturas. Use -Diagnostico para consulta sem alterações.
+
+Para escolher a senha inicial durante a recuperacao, execute ./scripts/bootstrap-admin.ps1 -Recuperar -DefinirSenha. Informe chave administrativa e depois a nova senha duas vezes em campos ocultos. A senha escolhida nao e impressa nem salva em arquivo; exige a mesma politica forte e troca no primeiro acesso. Essa opcao continua restrita ao administrador inicial que nunca entrou.

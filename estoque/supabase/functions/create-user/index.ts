@@ -25,6 +25,8 @@ Deno.serve(async req=>{
   const admin=createClient(url,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,{auth:{persistSession:false,autoRefreshToken:false}});
   const {data,error}=await admin.auth.admin.createUser({email:loginEmail(username),password:body.password,email_confirm:true,app_metadata:{provision_access:true,username,access_role:body.role,access_active:body.active,must_change_password:body.must_change_password}});
   if(error)return reply(400,{error:'Não foi possível criar o usuário. Verifique duplicidade, política de senha e implantação.'});
+  const {data:profile,error:profileError}=await admin.from('profiles').select('username,role,active,must_change_password,all_categories').eq('id',data.user.id).single();
+  if(profileError||!profile||profile.username!==username||profile.role!==body.role||profile.active!==body.active||profile.must_change_password!==body.must_change_password||!profile.all_categories)return reply(409,{code:'PROFILE_NOT_READY',error:'Login criado, mas perfil não confirmado. Confira a migração 011; não repita a criação.'});
   return reply(201,{id:data.user.id,username});
  }catch{return reply(400,{error:'Solicitação inválida ou serviço indisponível.'});}
 });
