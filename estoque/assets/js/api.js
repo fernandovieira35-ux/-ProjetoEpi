@@ -3,7 +3,7 @@ export const demoMode = new URLSearchParams(location.search).get('demo') === '1'
 const demo = demoMode ? await import('./demo.js') : null;
 export const configured = demoMode || /^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(config.url) && config.publishableKey.startsWith('sb_publishable_');
 export const client = demoMode ? demo.demoClient : configured ? window.supabase.createClient(config.url, config.publishableKey, {
- auth: { persistSession: false, autoRefreshToken: true, detectSessionInUrl: false }
+ auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
 }) : null;
 export async function rpc(name, args) {
  if(demoMode)return demo.demoRpc(name,args);

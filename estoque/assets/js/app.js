@@ -1,6 +1,7 @@
 import './effects.js';
 import {createUserError} from './create-user-error.js';
 import {showMfaSetup,clearMfaSetup} from './mfa-setup.js';
+import {rememberMfaSession, trustedMfaSession, expiredMfaSession, forgetMfaSession} from './mfa-session.js';
 import {loginErrorMessage} from './login-errors.js';
 import {setupUnitChoice,unitGuidance,suggestedUnit} from './epi-units.js';
 import {inventoryRows,buildInventoryReport,exportInventoryReport} from './inventory-report.js';
@@ -38,7 +39,7 @@ let adjustmentExpected=null,adjustmentRequest=null,adjustmentPayload='';
 let restoreRequest=null;
 let epiCodeStatus=null,epiRequest=null,epiPayload='';
 $('item-code-mode').addEventListener('change',()=>{if($('item-code-mode').value==='manual')$('item-code').value='';renderCodeChoice(epiCodeStatus);});
-let state={items:[],categories:[],movements:[],profiles:[]}, pending=[], factor=null, busy=false;
+let state={items:[],categories:[],movements:[],profiles:[]}, pending=[], factor=null, busy=false, replacingFactor=null;
 const message=text=>{$('message').textContent=text;};
 const category=id=>state.categories.find(c=>c.id===id)?.name??'Categoria';
 const item=id=>state.items.find(i=>i.id===id)?.name??'Equipamento';
@@ -114,7 +115,18 @@ async function refresh(){
  $('date').textContent=`Atualizado em ${new Date().toLocaleString('pt-BR')}`;
  renderStockChart(items,categories);
  $('stock-chart-status').textContent='Atualizado em '+new Date().toLocaleString('pt-BR')+'. Atualização automática a cada 60 segundos nesta tela.';
- $('users-body').replaceChildren();for(const p of profiles)cellRow($('users-body'),[p.username||p.id,roleLabel(p.role),p.active?'Sim':'Não',p.must_change_password?'Sim':'Não']);
+ $('users-body').replaceChildren();for(const p of profiles){
+  const controls=document.createElement('div');controls.className='reason--actions';
+  if(profile.role==='admin'&&p.id!==user.id&&p.active){
+   const remove=document.createElement('button');remove.type='button';remove.className='button--secondary';remove.textContent='Excluir acesso';
+   remove.setAttribute('aria-label','Excluir acesso de '+(p.username||p.id));
+   remove.addEventListener('click',()=>{
+    if(!window.confirm(`Excluir o acesso de “${p.username||p.id}”? O usuário ficará inativo e não poderá acessar o sistema. O cadastro e o histórico serão preservados. Você poderá reativá-lo em Alterar permissões.`))return;
+    task(async()=>{await rpc('set_user_access',{p_user:p.id,p_role:p.role,p_active:false});await refresh();message('Acesso excluído (inativado). O histórico de EPIs foi preservado.');});
+   });controls.append(remove);
+  }else controls.textContent=p.id===user.id?'Seu acesso':'—';
+  cellRow($('users-body'),[p.username||p.id,roleLabel(p.role),p.active?'Sim':'Não',p.must_change_password?'Sim':'Não',controls]);
+ }
  if(profile.role!=='leitor')updateDashboard({...state,deliveries,role:profile.role,identity:profile.username||user.email||user.id,updated:new Date(),demo:demoMode});else clearDashboard();
  renderTables();$('workspace').hidden=false;$('login').hidden=true;$('logout').hidden=false;$('print').disabled=false;syncLayout();
 }
@@ -131,7 +143,38 @@ async function afterLogin(){
  $('login-form').hidden=true;$('mfa-form').hidden=false;message('Confirme o segundo fator para acessar os registros.');
 }
 form('login-form',async(v,f)=>{if(!configured)throw new Error('Configure assets/js/config.js primeiro.');if(demoMode&&v.email.trim().toLowerCase()==='adcmim')throw new Error('Este usuário pertence ao ambiente real. Clique em Voltar ao ambiente real e entre com a senha mais recente.');let error;try{requireStrongPassword(v.password);({error}=await client.auth.signInWithPassword({email:demoMode&&!v.email.includes('@')&&['admin','operador','leitor'].includes(v.email.trim().toLowerCase())?v.email.trim().toLowerCase()+'@demo.local':loginEmail(v.email),password:v.password}));}finally{f.password.value='';}if(error)throw new Error(loginErrorMessage(error));$('logout').hidden=false;await afterLogin();});
-form('mfa-form',async(v,f)=>{const {error}=await client.auth.mfa.challengeAndVerify({factorId:factor,code:v.code});if(error)throw new Error('Código inválido ou expirado.');clearMfaSetup();f.reset();await refresh();message('Conexão ativa. Os registros exibidos respeitam suas permissões.');});
+form('mfa-form',async(v,f)=>{
+ const {error}=await client.auth.mfa.challengeAndVerify({factorId:factor,code:v.code});
+ if(error)throw new Error('Código inválido ou expirado.');
+ if(replacingFactor){
+  const oldFactor=replacingFactor;replacingFactor=null;
+  const removed=await client.auth.mfa.unenroll({factorId:oldFactor});
+  if(removed.error)message('Novo autenticador confirmado. O fator anterior não pôde ser removido; verifique a lista de fatores antes de continuar.');
+ }
+ const {data:{user}}=await client.auth.getUser();
+ if($('trust-device').checked&&user&&!demoMode){rememberMfaSession(user.id);}
+ else forgetMfaSession();
+ clearMfaSetup();f.reset();await refresh();
+ message($('trust-device').checked?'Segundo fator confirmado. Esta sessão poderá permanecer ativa neste navegador por até 30 dias, desde que não seja encerrada.':'Segundo fator confirmado. Será necessário autenticar novamente ao reabrir a página.');
+});
+$('mfa-qr-toggle').addEventListener('click',()=>{
+ const block=$('mfa-setup');if(block.hidden)return;
+ const img=$('mfa-qr');if(!img.hasAttribute('src')){message('O QR Code não está mais disponível. Inicie um novo cadastro de autenticador.');return;}
+ img.hidden=!img.hidden;$('mfa-qr-toggle').textContent=img.hidden?'Exibir QR Code':'Ocultar QR Code';
+});
+action('mfa-replace',async()=>{
+ if(demoMode)throw new Error('O autenticador não pode ser configurado no modo demonstração.');
+ const {data:level,error:levelError}=await client.auth.mfa.getAuthenticatorAssuranceLevel();
+ if(levelError||level.currentLevel!=='aal2')throw new Error('Confirme primeiro o segundo fator para substituir seu autenticador.');
+ const {data,error}=await client.auth.mfa.listFactors();if(error)throw error;
+ const current=data.totp.find(f=>f.status==='verified');if(!current)throw new Error('Nenhum autenticador confirmado para substituir.');
+ const enrolled=await client.auth.mfa.enroll({factorType:'totp',friendlyName:'Transcol EPI - novo autenticador'});
+ if(enrolled.error)throw enrolled.error;
+ replacingFactor=current.id;factor=enrolled.data.id;
+ showMfaSetup(enrolled.data.totp);$('login').hidden=false;$('login-form').hidden=true;$('mfa-form').hidden=false;
+ message('Escaneie o novo QR Code no Authy e confirme o código. O autenticador anterior será preservado até a confirmação do novo.');
+ window.scrollTo({top:0,behavior:'smooth'});
+});
 form('category-form',async(v,f)=>{await rpc('create_category',{p_name:v.name});await refresh();f.reset();message('Categoria cadastrada.');});
 function resetReasonEditor(){editingReasonId=null;$('reason-form').reset();$('reason-save').textContent='Cadastrar motivo';$('reason-cancel').hidden=true;}
 $('reason-cancel').addEventListener('click',resetReasonEditor);
@@ -193,6 +236,15 @@ action('confirm-import',async()=>{if(!pending.length)return;if($('import-mode').
 action('exec-refresh',async()=>{await refresh();message('Painel executivo atualizado.');});
 action('exec-export',async()=>{await refresh();if($('executivo').hidden)throw new Error('Acesso não autorizado.');exportBook(dashboardSheets(),(demoMode?'DEMO-':'')+'relatorio-executivo.xlsx');});
 action('exec-print',async()=>{await refresh();if($('executivo').hidden)throw new Error('Acesso não autorizado.');validateDashboard();document.body.classList.add('executive--printing');try{window.print();}finally{document.body.classList.remove('executive--printing');}});
+// Expira a confiança local mesmo que a aba permaneça aberta por mais de 30 dias.
+setInterval(()=>{if(demoMode||!client||$('workspace').hidden)return;
+ client.auth.getUser().then(async({data:{user}})=>{
+  if(user&&expiredMfaSession(user.id)){
+   forgetMfaSession();await client.auth.signOut();
+   message('Período de confiança encerrado. Entre novamente e confirme o segundo fator.');
+  }
+ }).catch(()=>{});
+},60000);
 setInterval(()=>{if(!busy&&!document.hidden&&!$('workspace').hidden&&!$('executivo').hidden&&location.hash==='#executivo')task(async()=>{try{await refresh();}catch(e){$('exec-updated').textContent='Atualização falhou. Os dados exibidos são da última consulta bem-sucedida.';throw e;}});},60000);
 for(const id of ['stock-chart-type','stock-chart-unit'])$(id).addEventListener('change',()=>renderStockChart(state.items,state.categories));
 action('stock-chart-refresh',async()=>{try{await refresh();}catch(e){$('stock-chart-status').textContent='Falha na atualização. Os dados anteriores foram mantidos; tente novamente.';throw e;}});
@@ -202,8 +254,17 @@ async function printInventory(){const {records,meta}=await inventoryReportData()
 action('inventory-print',printInventory);
 action('inventory-export',async()=>{const {records,meta}=await inventoryReportData();await exportInventoryReport(records,meta);message('Relatório de inventário com logo exportado. Para restauração, use Excel de dados.');});
 action('print',async()=>{if(location.hash==='#inventario')return printInventory();await refresh();window.print();});
-$('logout').addEventListener('click',async()=>{if(client)await client.auth.signOut();if(!demoMode){location.reload();return;}state={items:[],categories:[],movements:[],profiles:[]};recipients=[];deliveries=[];pending=[];clearDashboard();resetPasswordForm();$('adjust-form').reset();adjustmentExpected=null;adjustmentRequest=null;adjustmentPayload='';resetReasonEditor();reasons=[];$('reasons-body').replaceChildren();$('categories-body').replaceChildren();$('move-reason').replaceChildren();updateReasonNotice();$('item-form').reset();epiCodeStatus=null;epiRequest=null;epiPayload='';renderCodeChoice(null);$('expiry-banner').hidden=true;$('expiry-body').replaceChildren();document.body.classList.remove('password--required');$('workspace').hidden=true;$('login').hidden=false;$('login-form').hidden=false;$('login-form').reset();$('logout').hidden=true;$('print').disabled=true;$('identity').textContent='DEMONSTRAÇÃO';for(const id of ['items-body','moves-body','users-body','recipients-body','delivery-receipt','chart'])$(id).replaceChildren();location.hash='';syncLayout();message('Sessão encerrada. Os dados de demonstração permanecem nesta aba até recarregar.');});
-if(configured){message('Entre com seu usuário para acessar o estoque.');client.auth.onAuthStateChange(event=>{if(event==='SIGNED_OUT'){clearMfaSetup();state={items:[],categories:[],movements:[],profiles:[]};pending=[];resetPasswordForm();$('item-form').reset();epiCodeStatus=null;epiRequest=null;epiPayload='';renderCodeChoice(null);$('expiry-banner').hidden=true;$('expiry-body').replaceChildren();clearDashboard();$('workspace').hidden=true;$('print').disabled=true;$('identity').textContent='Sessão encerrada';for(const id of ['items-body','moves-body','users-body','preview-body','recipients-body','delivery-receipt','chart'])$(id).replaceChildren();message('Sessão encerrada. Recarregue a página para entrar novamente.');}});}else{message('Configuração pendente: preencha a URL e a chave publicável em assets/js/config.js e aplique a migração SQL.');$('login-form').querySelector('button').disabled=true;}
+$('logout').addEventListener('click',async()=>{forgetMfaSession();if(client)await client.auth.signOut();if(!demoMode){location.reload();return;}state={items:[],categories:[],movements:[],profiles:[]};recipients=[];deliveries=[];pending=[];clearDashboard();resetPasswordForm();$('adjust-form').reset();adjustmentExpected=null;adjustmentRequest=null;adjustmentPayload='';resetReasonEditor();reasons=[];$('reasons-body').replaceChildren();$('categories-body').replaceChildren();$('move-reason').replaceChildren();updateReasonNotice();$('item-form').reset();epiCodeStatus=null;epiRequest=null;epiPayload='';renderCodeChoice(null);$('expiry-banner').hidden=true;$('expiry-body').replaceChildren();document.body.classList.remove('password--required');$('workspace').hidden=true;$('login').hidden=false;$('login-form').hidden=false;$('login-form').reset();$('logout').hidden=true;$('print').disabled=true;$('identity').textContent='DEMONSTRAÇÃO';for(const id of ['items-body','moves-body','users-body','recipients-body','delivery-receipt','chart'])$(id).replaceChildren();location.hash='';syncLayout();message('Sessão encerrada. Os dados de demonstração permanecem nesta aba até recarregar.');});
+if(configured){message('Entre com seu usuário para acessar o estoque.');
+ if(!demoMode)queueMicrotask(()=>task(async()=>{
+  const {data:{session}}=await client.auth.getSession();if(!session)return;
+  const {data:{user},error}=await client.auth.getUser();
+  if(error||!user||!trustedMfaSession(user.id)){forgetMfaSession();await client.auth.signOut();return;}
+  const {data:aal,error:aalError}=await client.auth.mfa.getAuthenticatorAssuranceLevel();
+  if(aalError||aal.currentLevel!=='aal2'){forgetMfaSession();await client.auth.signOut();return;}
+  $('logout').hidden=false;await refresh();message('Sessão MFA válida restaurada neste dispositivo.');
+ }));
+ client.auth.onAuthStateChange(event=>{if(event==='SIGNED_OUT'){clearMfaSetup();state={items:[],categories:[],movements:[],profiles:[]};pending=[];resetPasswordForm();$('item-form').reset();epiCodeStatus=null;epiRequest=null;epiPayload='';renderCodeChoice(null);$('expiry-banner').hidden=true;$('expiry-body').replaceChildren();clearDashboard();$('workspace').hidden=true;$('print').disabled=true;$('identity').textContent='Sessão encerrada';for(const id of ['items-body','moves-body','users-body','preview-body','recipients-body','delivery-receipt','chart'])$(id).replaceChildren();message('Sessão encerrada. Recarregue a página para entrar novamente.');}});}else{message('Configuração pendente: preencha a URL e a chave publicável em assets/js/config.js e aplique a migração SQL.');$('login-form').querySelector('button').disabled=true;}
 
 $('import-mode').addEventListener('change',()=>{pending=[];$('file').value='';$('preview-table').hidden=true;$('confirm-import').disabled=true;$('preview').textContent='Selecione a planilha para o modo escolhido.';});
 if(demoMode){$('demo-banner').hidden=false;$('identity').textContent='DEMONSTRAÇÃO';document.title='DEMO · Transcol · Gestão de EPIs';message('Entre com um usuário de demonstração. Nenhuma conexão com o Supabase será feita.');}

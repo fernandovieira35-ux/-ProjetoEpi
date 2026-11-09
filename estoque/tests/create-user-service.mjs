@@ -7,7 +7,35 @@ assert.equal(/^import .*from '\.\./m.test(source),false);
 let handler,allow=true,validSession=true,profileReady=true,adminCalls=0;
 const profile={username:'teste.usuario',role:'operador',active:true,must_change_password:true,all_categories:true};
 const createClient=(url,key)=>key==='admin'?{auth:{admin:{createUser:async()=>{adminCalls++;return {data:{user:{id:'new-id'}}};}}},from:()=>({select:()=>({eq:()=>({single:async()=>({data:profileReady?profile:null})})})})}:{auth:{getUser:async()=>({data:{user:validSession?{id:'caller'}:null}})},rpc:async()=>({data:allow})};
-vm.runInNewContext(source.replace(/^import .*\r?\n/gm,'').replace('status:number,message:unknown','status,message').replace(/\)!/g,')'),{createClient,Response,TextEncoder,Deno:{env:{get:name=>({APP_ORIGIN:'http://127.0.0.1:5501',SUPABASE_URL:'https://test.supabase.co',SUPABASE_ANON_KEY:'public',SUPABASE_SERVICE_ROLE_KEY:'admin'})[name]},serve:fn=>handler=fn}});
+const codigoTeste = source
+  .replace(/^import .*?\r?\n/gm, '')
+  .replace('status:number,message:unknown', 'status,message')
+  .replace(
+    /(Deno\.env\.get\('[^']+'\))!/g,
+    '$1'
+  );
+
+vm.runInNewContext(
+  codigoTeste,
+  {
+    createClient,
+    Response,
+    TextEncoder,
+Deno: {
+  env: {
+    get: (name) => ({
+      APP_ORIGIN: 'http://127.0.0.1:5501',
+      SUPABASE_URL: 'https://test.supabase.co',
+      SUPABASE_ANON_KEY: 'public',
+      SUPABASE_SERVICE_ROLE_KEY: 'admin'
+    })[name]
+  },
+     serve: (fn) => {
+        handler = fn;
+      }
+    }
+  }
+);
 const request=()=>new Request('https://test.supabase.co/functions/v1/create-user',{method:'POST',headers:{origin:'http://127.0.0.1:5501',authorization:'Bearer test'},body:JSON.stringify({...profile,password:'TesteSomente2026!'})});
 validSession=false;assert.equal((await handler(request())).status,401);assert.equal(adminCalls,0);
 validSession=true;allow=false;assert.equal((await handler(request())).status,403);assert.equal(adminCalls,0);
